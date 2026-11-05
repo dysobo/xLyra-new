@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   sync:
-    name: Sync main from upstream
+    name: Sync main and test from upstream
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -19,10 +19,22 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Sync from upstream
+      - name: Hard-reset main and test to upstream
         run: |
-          git remote add upstream https://github.com/Yachiyo-5i/xLyra.git
-          git fetch upstream
-          git checkout main
-          git reset --hard upstream/main
-          git push origin main --force
+          set -euo pipefail
+          git remote add upstream https://github.com/Yachiiiiyo/xLyra.git
+          git fetch upstream --prune
+
+          sync_branch() {
+            local branch="$1"
+            local upstream_ref="refs/remotes/upstream/${branch}"
+            if ! git show-ref --verify --quiet "${upstream_ref}"; then
+              echo "Skipping ${branch}: upstream/${branch} does not exist"
+              return 0
+            fi
+            git push --force origin "${upstream_ref}:refs/heads/${branch}"
+            echo "Reset ${branch} to $(git rev-parse --short "${upstream_ref}")"
+          }
+
+          sync_branch main
+          sync_branch test
