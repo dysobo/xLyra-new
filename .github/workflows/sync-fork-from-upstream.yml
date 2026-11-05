@@ -13,10 +13,24 @@ jobs:
     name: Sync main and test from upstream
     runs-on: ubuntu-latest
     steps:
+      - name: Require a token that can update workflow files
+        env:
+          SYNC_UPSTREAM_TOKEN: ${{ secrets.SYNC_UPSTREAM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SYNC_UPSTREAM_TOKEN}" ]]; then
+            echo "::error::Repository secret SYNC_UPSTREAM_TOKEN is missing."
+            echo "GITHUB_TOKEN cannot push commits that create or change files under .github/workflows."
+            echo "The permissions: block has no workflows key; adding workflows: write makes the workflow file invalid."
+            echo "Create a fine-grained PAT for this repository with Contents: Read and write and Workflows: Read and write,"
+            echo "store it as the Actions secret SYNC_UPSTREAM_TOKEN, then re-run this workflow."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.SYNC_UPSTREAM_TOKEN }}
           fetch-depth: 0
 
       - name: Hard-reset main and test, then restore this workflow
@@ -43,7 +57,8 @@ jobs:
               return 0
             fi
             if ! git push --force origin "${upstream_ref}:refs/heads/${branch}"; then
-              echo "Failed to reset ${branch}"
+              echo "Failed to reset ${branch}."
+              echo "SYNC_UPSTREAM_TOKEN must be able to update .github/workflows (fine-grained: Contents and Workflows write)."
               return 1
             fi
             echo "Reset ${branch} to $(git rev-parse --short "${upstream_ref}")"
