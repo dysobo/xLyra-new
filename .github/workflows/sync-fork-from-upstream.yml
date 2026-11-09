@@ -39,6 +39,7 @@ jobs:
 
           keeper=".github/workflows/sync-fork-from-upstream.yml"
           upstream_sync=".github/workflows/sync-upstream.yml"
+          release_workflow=".github/workflows/release.yml"
           saved="$(mktemp)"
           if [[ ! -f "${keeper}" ]]; then
             echo "Missing ${keeper}; refuse to reset main without the fork keeper workflow."
@@ -64,12 +65,15 @@ jobs:
             echo "Reset ${branch} to $(git rev-parse --short "${upstream_ref}")"
           }
 
+          # main is published once, after this step. Pushing upstream/main first
+          # would put release.yml on the branch tip and start Release Please
+          # before the keeper commit could delete it.
           main_status=0
           test_status=0
-          sync_branch main || main_status=$?
-          sync_branch test || test_status=$?
 
-          if [[ "${main_status}" -eq 0 ]] && git show-ref --verify --quiet refs/remotes/upstream/main; then
+          if ! git show-ref --verify --quiet refs/remotes/upstream/main; then
+            echo "Skipping main: upstream/main does not exist"
+          else
             git checkout -B main refs/remotes/upstream/main
             mkdir -p .github/workflows
             cp "${saved}" "${keeper}"
@@ -77,6 +81,12 @@ jobs:
             # next scheduled run force-pushes main and drops this keeper commit.
             if git ls-files --error-unmatch "${upstream_sync}" >/dev/null 2>&1; then
               git rm -f "${upstream_sync}"
+            fi
+            # Upstream release.yml runs Release Please on every push to main and
+            # requires RELEASE_PLEASE_TOKEN, which this fork does not have.
+            # Remove it in this same commit so scheduled syncs cannot bring it back.
+            if git ls-files --error-unmatch "${release_workflow}" >/dev/null 2>&1; then
+              git rm -f "${release_workflow}"
             fi
             git add -- "${keeper}"
 
@@ -86,12 +96,18 @@ jobs:
               git -c user.name="github-actions[bot]" \
                   -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
                   commit -m "ci: keep fork sync workflow after upstream reset"
-              git push origin HEAD:main
-              echo "Restored ${keeper} onto main."
             fi
-          elif [[ "${main_status}" -ne 0 ]]; then
-            echo "main was not reset; skip restoring the fork workflow."
+
+            if ! git push --force origin HEAD:main; then
+              echo "Failed to reset main."
+              echo "SYNC_UPSTREAM_TOKEN must be able to update .github/workflows (fine-grained: Contents and Workflows write)."
+              main_status=1
+            else
+              echo "Reset main to $(git rev-parse --short HEAD) without ${release_workflow}."
+            fi
           fi
+
+          sync_branch test || test_status=$?
 
           if [[ "${main_status}" -ne 0 || "${test_status}" -ne 0 ]]; then
             exit 1
